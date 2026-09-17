@@ -44,37 +44,56 @@ def load_config():
     except Exception as e:
         print("Using default configuration.")
 
+def parse_gprmc(line):
+    """
+    Pure parsing of a single $GPRMC NMEA sentence. Returns a
+    (year, month, day, hh, mm, ss) tuple if the sentence carries a valid
+    ('A') fix, or None otherwise. Kept separate from the RTC/UART calls
+    below so it can be unit-tested on a desktop Python interpreter without
+    real hardware.
+    """
+    if not line.startswith('$GPRMC'):
+        return None
+
+    parts = line.split(',')
+    # Check if data is valid (V = invalid, A = active)
+    if len(parts) <= 9 or parts[2] != 'A':
+        return None
+
+    time_str = parts[1]  # Format: HHMMSS.SS
+    date_str = parts[9]  # Format: DDMMYY
+
+    if not time_str or not date_str:
+        return None
+
+    hh = int(time_str[0:2])
+    mm = int(time_str[2:4])
+    ss = int(time_str[4:6])
+
+    day = int(date_str[0:2])
+    month = int(date_str[2:4])
+    year = 2000 + int(date_str[4:6])
+
+    return (year, month, day, hh, mm, ss)
+
+
 def parse_gps_time():
     """
     Reads NMEA sentences from UART, looks for $GPRMC to extract UTC time,
-    and updates the ESP32 RTC. 
+    and updates the ESP32 RTC.
     Returns True if time synced successfully, False otherwise.
     """
     if gps_uart.any():
         try:
             line = gps_uart.readline().decode('utf-8')
-            # Look for Recommended Minimum Specific GPS/Transit Data
-            if line.startswith('$GPRMC'):
-                parts = line.split(',')
-                # Check if data is valid (V = invalid, A = active)
-                if len(parts) > 2 and parts[2] == 'A':
-                    time_str = parts[1] # Format: HHMMSS.SS
-                    date_str = parts[9] # Format: DDMMYY
-                    
-                    if time_str and date_str:
-                        hh = int(time_str[0:2])
-                        mm = int(time_str[2:4])
-                        ss = int(time_str[4:6])
-                        
-                        day = int(date_str[0:2])
-                        month = int(date_str[2:4])
-                        year = 2000 + int(date_str[4:6])
-                        
-                        # Set internal RTC (Year, Month, Day, Weekday, Hours, Minutes, Seconds, Subseconds)
-                        # Note: This is UTC time.
-                        rtc.datetime((year, month, day, 0, hh, mm, ss, 0))
-                        print(f"RTC Synced with GPS: {year}-{month:02d}-{day:02d} {hh:02d}:{mm:02d}:{ss:02d} UTC")
-                        return True
+            parsed = parse_gprmc(line)
+            if parsed:
+                year, month, day, hh, mm, ss = parsed
+                # Set internal RTC (Year, Month, Day, Weekday, Hours, Minutes, Seconds, Subseconds)
+                # Note: This is UTC time.
+                rtc.datetime((year, month, day, 0, hh, mm, ss, 0))
+                print(f"RTC Synced with GPS: {year}-{month:02d}-{day:02d} {hh:02d}:{mm:02d}:{ss:02d} UTC")
+                return True
         except Exception as e:
             # Silently handle UART decode errors which are common with raw GPS data
             pass
@@ -95,43 +114,60 @@ def set_traffic_light(state):
         yellow_led.value(0)
         green_led.value(1)
 
+# Yellow light duration before turning red
+YELLOW_DURATION_S = 3
+
+
+def calculate_light_state(hh, mm, ss, offset_s, base_cycle_s,
+                           green_duration_s, yellow_duration_s):
+    """
+    Pure function: given the current time-of-day and this junction's
+    Green Wave configuration, returns 'GREEN', 'YELLOW', or 'RED'.
+    Kept separate from the RTC/GPIO calls so it can be unit-tested on a
+    desktop Python interpreter without real hardware.
+
+    Uses seconds-since-midnight (not just seconds-since-the-hour) as the
+    time base. An earlier version used only (minutes * 60 + seconds),
+    which reset to 0 at the top of every hour - for any base_cycle_s that
+    doesn't evenly divide 3600, that reset caused a real synchronization
+    glitch once per hour, since the "shifted" cycle position jumped
+    instead of continuing smoothly. Seconds-since-midnight only has that
+    same discontinuity once every 24 hours instead of every hour (see
+    README Known Limitations for why this isn't fully eliminated).
+    """
+    absolute_time_s = (hh * 3600) + (mm * 60) + ss
+
+    # Where are we in the local cycle?
+    # Subtract the offset to mathematically "shift" this junction's cycle
+    shifted_time_s = (absolute_time_s - offset_s) % base_cycle_s
+
+    if shifted_time_s < green_duration_s:
+        return 'GREEN'
+    elif shifted_time_s < (green_duration_s + yellow_duration_s):
+        return 'YELLOW'
+    else:
+        return 'RED'
+
+
 def run_traffic_loop():
     """
     Main loop that checks atomic time against the offset and triggers lights.
     """
     print("Starting OpenGreenWave Traffic Loop...")
-    
-    # Yellow light duration before turning red
-    YELLOW_DURATION_S = 3
-    
+
     while True:
-        # Get current time from RTC
         # rtc.datetime() returns (year, month, day, weekday, hours, minutes, seconds, subseconds)
         dt = rtc.datetime()
-        current_ss = dt[6] # seconds
-        current_mm = dt[5] # minutes
-        
-        # Calculate absolute time in seconds for synchronization purposes
-        # We synchronize based on the minute to keep it simple, but in reality 
-        # it would sync based on a specific epoch or hour to ensure all 
-        # junctions share the exact same 'zero' reference point.
-        absolute_time_s = (current_mm * 60) + current_ss
-        
-        # Where are we in the local cycle?
-        # Subtract the offset to mathematically "shift" this junction's cycle
-        shifted_time_s = (absolute_time_s - CONFIG_OFFSET_S) % BASE_CYCLE_S
-        
-        # Determine Light State
-        if shifted_time_s < GREEN_DURATION_S:
-            set_traffic_light('GREEN')
-        elif shifted_time_s < (GREEN_DURATION_S + YELLOW_DURATION_S):
-            set_traffic_light('YELLOW')
-        else:
-            set_traffic_light('RED')
-            
+        state = calculate_light_state(
+            dt[4], dt[5], dt[6],
+            CONFIG_OFFSET_S, BASE_CYCLE_S,
+            GREEN_DURATION_S, YELLOW_DURATION_S,
+        )
+        set_traffic_light(state)
+
         # Try to sync GPS time periodically in the background
         parse_gps_time()
-        
+
         time.sleep(0.1)
 
 def main():

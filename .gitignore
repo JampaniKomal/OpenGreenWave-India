@@ -7,5 +7,9 @@ __pycache__/
 .vscode/
 .idea/
 
+# Python virtual environment / test cache
+venv/
+.pytest_cache/
+
 # ESP32 specific / configs
 config.json

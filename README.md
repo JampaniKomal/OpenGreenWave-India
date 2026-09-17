@@ -61,8 +61,40 @@ Connect the NEO-6M GPS to the ESP32:
 
 The traffic light relays (simulated as LEDs in the code) are mapped to GPIO pins 25 (Red), 26 (Yellow), and 27 (Green).
 
+## Testing
+
+The calculator's math and the firmware's core scheduling/parsing logic are
+both covered by real, runnable tests (the firmware's hardware calls are
+mocked so the actual scheduling and NMEA-parsing functions can run on a
+normal desktop Python interpreter, without an ESP32):
+
+```bash
+python -m venv venv
+source venv/bin/activate  # Windows: .\venv\Scripts\activate
+pip install -r requirements-dev.txt
+pytest -v
+```
+
+## Known limitations
+
+- **Not tested on real hardware in this pass.** The firmware's GPIO/UART/RTC
+  calls are mocked for testing the scheduling and NMEA-parsing logic, but
+  the actual physical behavior (wiring, GPS lock time, relay timing
+  accuracy) has not been verified on a real ESP32 + NEO-6M setup.
+- **Daily (not just hourly) synchronization boundary.** The scheduling math
+  uses seconds-since-midnight as its time base, so junctions stay
+  correctly synchronized across hour boundaries. It still has a single
+  discontinuity at midnight for any `base_cycle_s` that doesn't evenly
+  divide 86400 — a genuinely correct fix would need a true fixed epoch
+  reference (e.g. Unix time) rather than a daily-resetting one. Traffic
+  volume at midnight makes this a low-impact edge case, but it's not
+  eliminated.
+- **The calculator doesn't account for real-world travel time variance**
+  (traffic, signal timing changes, acceleration/deceleration near the
+  junction) — it computes an ideal offset assuming constant speed.
+
 ## Contributing
 We welcome contributions! Especially if you are traffic engineering student looking to adapt this for complex multi-lane junctions or integrate it into SUMO simulations.
 
 ## License
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
