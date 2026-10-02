@@ -75,6 +75,9 @@ pip install -r requirements-dev.txt
 pytest -v
 ```
 
+These tests (plus a `ruff` lint) run in [GitHub Actions](.github/workflows/ci.yml)
+on every push, across Python 3.11 and 3.12.
+
 ## Known limitations
 
 - **Not tested on real hardware in this pass.** The firmware's GPIO/UART/RTC

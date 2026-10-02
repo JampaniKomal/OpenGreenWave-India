@@ -41,7 +41,7 @@ def load_config():
             CONFIG_OFFSET_S = config['green_wave_config']['calculated_offset_s']
             BASE_CYCLE_S = config['green_wave_config']['base_cycle_s']
             print(f"Loaded config: Offset={CONFIG_OFFSET_S}s, Cycle={BASE_CYCLE_S}s")
-    except Exception as e:
+    except Exception:
         print("Using default configuration.")
 
 def parse_gprmc(line):
@@ -94,7 +94,7 @@ def parse_gps_time():
                 rtc.datetime((year, month, day, 0, hh, mm, ss, 0))
                 print(f"RTC Synced with GPS: {year}-{month:02d}-{day:02d} {hh:02d}:{mm:02d}:{ss:02d} UTC")
                 return True
-        except Exception as e:
+        except Exception:
             # Silently handle UART decode errors which are common with raw GPS data
             pass
     return False

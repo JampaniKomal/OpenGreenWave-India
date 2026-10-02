@@ -64,13 +64,31 @@ def test_light_state_stays_continuous_across_an_hour_boundary():
     """
     offset, base_cycle, green, yellow = 36, 70, 30, 3
 
-    # One second before the hour rolls over, and one second after -
-    # the cycle position should differ by exactly 1 (mod 70), not jump.
-    before = calculate_light_state(10, 59, 59, offset, base_cycle, green, yellow)
-    after = calculate_light_state(11, 0, 0, offset, base_cycle, green, yellow)
-
-    # Independently recompute the expected shifted positions to confirm
-    # they're exactly 1 second apart in cycle terms, not discontinuous.
+    # Independently recompute the correct (seconds-since-midnight) cycle
+    # positions one second apart across the hour boundary.
     before_shifted = ((10 * 3600 + 59 * 60 + 59) - offset) % base_cycle
     after_shifted = ((11 * 3600 + 0 * 60 + 0) - offset) % base_cycle
     assert after_shifted == (before_shifted + 1) % base_cycle
+
+    def expected_color(shifted):
+        if shifted < green:
+            return 'GREEN'
+        if shifted < green + yellow:
+            return 'YELLOW'
+        return 'RED'
+
+    # The function under test must agree with that reference at both instants,
+    # i.e. it really advances one second across the hour boundary instead of
+    # jumping. (This actually exercises calculate_light_state; the arithmetic
+    # above alone would pass even if the function were broken.)
+    before = calculate_light_state(10, 59, 59, offset, base_cycle, green, yellow)
+    after = calculate_light_state(11, 0, 0, offset, base_cycle, green, yellow)
+    assert before == expected_color(before_shifted)
+    assert after == expected_color(after_shifted)
+
+    # Confirm this input really is sensitive to the bug: the OLD buggy time
+    # base (minutes*60+seconds, which resets every hour) would NOT keep the
+    # two positions one second apart here.
+    buggy_before = ((59 * 60 + 59) - offset) % base_cycle
+    buggy_after = ((0 * 60 + 0) - offset) % base_cycle
+    assert buggy_after != (buggy_before + 1) % base_cycle
